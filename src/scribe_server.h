@@ -64,6 +64,7 @@ class scribeHandler : virtual public scribe::thrift::scribeIf,
   size_t numThriftServerThreads;
   unsigned long updateStatusInterval;  // periodic interval to publish counters
 
+  boost::shared_ptr<SSLOptions> sslOptions;
 
   inline unsigned long long getMaxQueueSize() {
     return maxQueueSize;
@@ -82,7 +83,7 @@ class scribeHandler : virtual public scribe::thrift::scribeIf,
 	std::string resultCodeToString(scribe::thrift::ResultCode::type rc);
 
   inline void setServer(
-      boost::shared_ptr<apache::thrift::server::TNonblockingServer> & server) {
+      boost::shared_ptr<apache::thrift::server::TServer> & server) {
     this->server = server;
   }
 
@@ -90,7 +91,7 @@ class scribeHandler : virtual public scribe::thrift::scribeIf,
     return maxConn;
   }
  private:
-  boost::shared_ptr<apache::thrift::server::TNonblockingServer> server;
+  boost::shared_ptr<apache::thrift::server::TServer> server;
 
   unsigned long checkPeriod; // periodic check interval for all contained stores
 

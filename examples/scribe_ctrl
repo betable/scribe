@@ -19,36 +19,40 @@
 
 '''scribe_ctrl: A simple script for running and monitoring scribe.'''
 
+import argparse
 import sys
 
-#make this work for facebook environment too
-isFacebook = 0
-if (isFacebook == 1):
-    # put your own path here!
-    sys.path.insert(0, '/mytrunk/fbcode-test/common/fb303/scripts')
-    import fb303_simple_mgmt
-else:
-    from fb303_scripts import *
-
-# thrift python packages need to be installed
+from fb303_scripts import *
 import thrift
 from thrift import protocol, transport
 from thrift.transport import TTransport
 from thrift.protocol import TBinaryProtocol
 
-if (len(sys.argv) > 2):
-    port = int(sys.argv[2])
-else:
-    port = 1463
 
-if (len(sys.argv) > 1):
-    retval = fb303_simple_mgmt.service_ctrl(sys.argv[1],
-                                            port,
-                                            trans_factory = TTransport.TFramedTransportFactory(),
-                                            prot_factory = TBinaryProtocol.TBinaryProtocolFactory())
+def main():
+
+    parser = argparse.ArgumentParser(description='Control scribe')
+    parser.add_argument('command', metavar='COMMAND', nargs=1, help='the command')
+    parser.add_argument('-p', '--port', dest='port', type=int, default=1463, help='the port number')
+    parser.add_argument('-v', '--validate', action='store_true', default=False)
+    parser.add_argument('--keyfile', dest='keyfile', help='ssl key file')
+    parser.add_argument('--certfile', dest='certfile', help='ssl cert file')
+    parser.add_argument('--cacerts', dest='cacerts', help='ssl cacerts')
+
+    args = parser.parse_args()
+
+    retval = fb303_simple_mgmt.service_ctrl(args.command.pop(),
+        args.port,
+        trans_factory = TTransport.TFramedTransportFactory(),
+        prot_factory = TBinaryProtocol.TBinaryProtocolFactory(),
+        validate=args.validate,
+        ca_certs=args.cacerts,
+        keyfile=args.keyfile,
+        certfile=args.certfile)
+
     sys.exit(retval)
 
-else:
-    print 'Usage: scribe_ctrl command [port]'
-    print '  commands: stop counters status version name alive'
-    sys.exit(2)
+
+if __name__ == '__main__':
+    main()
+

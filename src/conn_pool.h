@@ -24,6 +24,8 @@
 
 #include "common.h"
 
+class SSLOptions;
+
 /* return codes for ScribeConn and ConnPool */
 #define CONN_FATAL        (-1) /* fatal error. close everything */
 #define CONN_OK           (0)  /* success */
@@ -40,7 +42,7 @@
 class scribeConn {
  public:
   scribeConn(const std::string& host, unsigned long port, int timeout,
-      int msgThresholdBeforeReconnect, int allowableDeltaBeforeReconnect);
+      int msgThresholdBeforeReconnect, int allowableDeltaBeforeReconnect, boost::shared_ptr<SSLOptions> sslOptions);
   scribeConn(const std::string &service, const server_vector_t &servers, int timeout,
       int msgThresholdBeforeReconnect, int allowableDeltaBeforeReconnect);
   virtual ~scribeConn();
@@ -71,6 +73,8 @@ class scribeConn {
   unsigned refCount;
 
   bool serviceBased;
+  boost::shared_ptr<SSLOptions> sslOptions;
+  boost::shared_ptr<apache::thrift::transport::TSSLSocketFactory> sslSocketFactory;
   std::string serviceName;
   server_vector_t serverList;
   std::string remoteHost;
@@ -105,7 +109,7 @@ class ConnPool {
   ConnPool();
   virtual ~ConnPool();
 
-  bool open(const std::string& host, unsigned long port, int timeout);
+  bool open(const std::string& host, unsigned long port, int timeout, boost::shared_ptr<SSLOptions> sslOptions);
   bool open(const std::string &service, const server_vector_t &servers, int timeout);
 
   void close(const std::string& host, unsigned long port);

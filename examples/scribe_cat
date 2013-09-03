@@ -19,20 +19,25 @@ See accompanying file LICENSE or visit the Scribe site at:
 http://developers.facebook.com/scribe/
 """
 
-import optparse
+
+import argparse
 import logging
 import sys
 import time
+
 from thrift.transport import TTransport
-from thrift.transport import TSocket
+from thrift.transport import TSocket, TSSLSocket
 from thrift.transport.TTransport import TTransportException
 from thrift.protocol import TBinaryProtocol
 from scribe import scribe
 
+
 quiet = False
+
 
 class Error(Exception): pass
 class Done(Exception): pass
+
 
 def scribe_fix_legacy():
     global scribe
@@ -41,8 +46,9 @@ def scribe_fix_legacy():
         return old_log_entry(kwargs)
     scribe.LogEntry = new_log_entry
 
-def send(fd, category, host='127.0.0.1', port=1463, reconnect_timeout=1):
+def send(fd, category, host='127.0.0.1', port=1463, reconnect_timeout=1, validate=True, ca_certs=None, keyfile=None, certfile=None):
     line = None
+    timeout = reconnect_timeout
 
     while True:
         result = scribe.ResultCode.TRY_LATER
@@ -50,18 +56,17 @@ def send(fd, category, host='127.0.0.1', port=1463, reconnect_timeout=1):
         try:
             logging.info('Connecting to %s:%s' % (host, port))
 
-            socket = TSocket.TSocket(host=host, port=port)
+            if (ca_certs is not None or keyfile is not None or certfile is not None):
+                socket = TSSLSocket.TSSLSocket(host, port, validate=validate, ca_certs=ca_certs, keyfile=keyfile, certfile=certfile)
+            else:
+                socket = TSocket.TSocket(host=host, port=port)
+
             transport = TTransport.TFramedTransport(socket)
-            protocol = TBinaryProtocol.TBinaryProtocol(
-                trans=transport,
-                strictRead=False,
-                strictWrite=False,
-            )
+            protocol = TBinaryProtocol.TBinaryProtocol(trans=transport, strictRead=False, strictWrite=False)
             client = scribe.Client(iprot=protocol, oprot=protocol)
 
             try:
                 transport.open()
-                timeout = reconnect_timeout
 
                 while True:
                     if line is None:
@@ -71,16 +76,10 @@ def send(fd, category, host='127.0.0.1', port=1463, reconnect_timeout=1):
                             raise Done()
 
                     try:
-                        log_entry = scribe.LogEntry(
-                            category=category,
-                            message=line.strip(),
-                        )
+                        log_entry = scribe.LogEntry(category=category, message=line.strip())
                     except TypeError:
                         scribe_fix_legacy()
-                        log_entry = scribe.LogEntry(
-                            category=category,
-                            message=line.strip(),
-                        )
+                        log_entry = scribe.LogEntry(category=category, message=line.strip())
                     result = client.Log(messages=[log_entry])
 
                     if result == scribe.ResultCode.OK:
@@ -95,59 +94,46 @@ def send(fd, category, host='127.0.0.1', port=1463, reconnect_timeout=1):
 
         logging.info('Sleeping for %s' % timeout)
         time.sleep(timeout)
-        if timeout < 128: timeout *= 2
+        if timeout < 30: timeout *= 2
+
 
 if __name__ == '__main__':
-    parser = optparse.OptionParser(usage='usage: %prog [options] CATEGORY [FILE]')
-    parser.add_option(
-        '--host',
-        default='127.0.0.1',
-        dest='host',
-        help='destination Scribe host server',
-        metavar='HOST',
-    )
-    parser.add_option(
-        '--port',
-        default=1463,
-        dest='port',
-        help='destination Scribe port',
-        metavar='PORT',
-        type='int',
-    )
-    parser.add_option(
-        '-q',
-        '--quiet',
-        action='store_true',
-        dest='quiet',
-    )
-    options, args = parser.parse_args()
+    parser = argparse.ArgumentParser(description='Scribe cat')
+    parser.add_argument('category', metavar='CATEGORY', help='scribe category')
+    parser.add_argument('file', metavar='FILE', nargs='?', default=None)
+    parser.add_argument('--host', default='127.0.0.1', help='destination Scribe host server')
+    parser.add_argument('--port', default=1463, type=int, help='destination Scribe port')
+    parser.add_argument('-q', '--quiet', action='store_true')
+    parser.add_argument('-v', '--validate', action='store_true', default=False)
+    parser.add_argument('--keyfile', dest='keyfile', help='ssl key file')
+    parser.add_argument('--certfile', dest='certfile', help='ssl cert file')
+    parser.add_argument('--cacerts', dest='cacerts', help='ssl cacerts')
+
+    args = parser.parse_args()
     fd = sys.stdin
 
-    if options.quiet:
+    if args.quiet:
         logging.basicConfig(level=logging.CRITICAL)
     else:
         logging.basicConfig(level=logging.INFO)
 
     try:
-        if len(args) > 0:
-            if len(args) == 2:
-                if not os.path.isfile(args[1]):
-                    raise Error('File not found: %s' % args[1])
-                fd = open(args[1])
-            elif len(args) > 2:
-                raise Error('Only one file allowed: %s' % ', '.join(args[1:]))
-            try:
-                send(
-                    fd,
-                    args[0],
-                    host=options.host,
-                    port=options.port,
-                )
-            except (Done, KeyboardInterrupt):
-                sys.exit(0)
-        else:
-            if not options.quiet:
-                parser.print_help()
+        if args.file:
+            fd = open(args.file)
+        try:
+            send(
+                fd,
+                args.category,
+                host=args.host,
+                port=args.port,
+                validate=args.validate,
+                ca_certs=args.cacerts,
+                keyfile=args.keyfile,
+                certfile=args.certfile
+            )
+        except (Done, KeyboardInterrupt):
+            sys.exit(0)
+
     finally:
         try:
             fd.close()

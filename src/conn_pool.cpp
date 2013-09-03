@@ -58,13 +58,13 @@ string ConnPool::makeKey(const string& hostname, unsigned long port) {
   return key;
 }
 
-bool ConnPool::open(const string& hostname, unsigned long port, int timeout) {
+bool ConnPool::open(const string& hostname, unsigned long port, int timeout, shared_ptr<SSLOptions> sslOptions) {
   int msgThreshold = msgThresholdMap.count(ConnPool::makeKey(hostname, port)) ?
       msgThresholdMap[ConnPool::makeKey(hostname, port)] : defThresholdBeforeReconnect;
   LOG_OPER("Opening connection to %s:%ld. MsgThreshold is %d", hostname.c_str(), port, msgThreshold);
   return openCommon(makeKey(hostname, port),
       shared_ptr<scribeConn>(new scribeConn(hostname, port, timeout, 
-          msgThreshold, allowableDeltaBeforeReconnect)));
+          msgThreshold, allowableDeltaBeforeReconnect, sslOptions)));
 }
 
 bool ConnPool::open(const string &service, const server_vector_t &servers, int timeout) {
@@ -196,10 +196,32 @@ int ConnPool::sendCommon(const string &key,
   }
 }
 
+/**
+ * This access manager doesn't care what host you are from, just
+ * that the cert is signed by a trusted authority.
+ * (Use this when you only have one trusted cert: the one you care
+ * to accept, but don't care what hostname/IP you use to access this
+ * trusted endpoint.)
+ */
+class HostAgnosticAccessManager : public AccessManager {
+  public:
+  virtual Decision verify(const sockaddr_storage& sa ) throw() {
+    return ALLOW;
+  }
+  virtual Decision verify(const std::string& host, const char* name, int size) throw() {
+    return ALLOW;
+  }
+  virtual Decision verify(const sockaddr_storage& sa, const char* data, int size) throw() {
+    return ALLOW;
+  }
+};
+
+
 scribeConn::scribeConn(const string& hostname, unsigned long port, int timeout_,
-    int msgThresholdBeforeReconnect_, int allowableDeltaBeforeReconnect_)
+    int msgThresholdBeforeReconnect_, int allowableDeltaBeforeReconnect_, shared_ptr<SSLOptions> sslOptions)
   : refCount(1),
   serviceBased(false),
+  sslOptions(sslOptions),
   remoteHost(hostname),
   remotePort(port),
   sentSinceLastReconnect(0),
@@ -209,6 +231,12 @@ scribeConn::scribeConn(const string& hostname, unsigned long port, int timeout_,
   allowableDeltaBeforeReconnect(allowableDeltaBeforeReconnect_),
   currThresholdBeforeReconnect(msgThresholdBeforeReconnect_) {
   pthread_mutex_init(&mutex, NULL);
+  if (sslOptions->sslIsEnabled()) {
+    sslSocketFactory = sslOptions->createFactory();
+    // We only accept a whitelist of certs, regardless of the host, so ignore the host:
+    boost::shared_ptr<AccessManager> am(new HostAgnosticAccessManager);
+    sslSocketFactory->access(am);
+  }
 #ifdef USE_ZOOKEEPER
   zkRegistrationZnode = hostname;
 #endif
@@ -298,9 +326,13 @@ bool scribeConn::open() {
     }
 #endif
 
-    socket = serviceBased ?
-      shared_ptr<TSocket>(new TSocketPool(serverList)) :
-      shared_ptr<TSocket>(new TSocket(remoteHost, remotePort));
+    if (sslOptions.use_count() && sslOptions->sslIsEnabled()) {
+      socket = sslSocketFactory->createSocket(remoteHost, remotePort);
+    } else {
+      socket = serviceBased ?
+        shared_ptr<TSocket>(new TSocketPool(serverList)) :
+        shared_ptr<TSocket>(new TSocket(remoteHost, remotePort));
+    }
 
     if (!socket) {
       throw std::runtime_error("Failed to create socket");

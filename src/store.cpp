@@ -1825,6 +1825,40 @@ std::string BufferStore::getStatus() {
   return return_status;
 }
 
+SSLOptions::SSLOptions()
+  : useSsl(false) {
+}
+
+void SSLOptions::configure(StoreConf &configuration) {
+  std::string temp;
+  if (configuration.getString("use_ssl", temp) && temp.compare("yes") == 0) {
+    useSsl = true;
+    configuration.getString("ssl_trusted_file", sslTrustedFile);
+    configuration.getString("ssl_cert_file", sslCertFile);
+    configuration.getString("ssl_key_file", sslKeyFile);
+  }
+}
+
+shared_ptr<TSSLSocketFactory> SSLOptions::createFactory() const {
+  shared_ptr<TSSLSocketFactory> sslFactory(new TSSLSocketFactory);
+
+  if (!sslKeyFile.empty()) {
+    LOG_OPER("SSL: Using <%s> for cert and <%s> for the key", sslCertFile.c_str(), sslKeyFile.c_str());
+    sslFactory->loadCertificate(sslCertFile.c_str());
+    sslFactory->loadPrivateKey(sslKeyFile.c_str());
+  }
+
+  if (!sslTrustedFile.empty()) {
+    LOG_OPER("SSL: Using <%s> as the trusted list of certs", sslTrustedFile.c_str());
+    sslFactory->loadTrustedCertificates(sslTrustedFile.c_str());
+  }
+
+  if (hasBothCertAndTrustedList()) {
+    LOG_OPER("SSL: Requiring remote side have a valid cert too");
+    sslFactory->authenticate(true);
+  }
+  return sslFactory;
+}
 
 NetworkStore::NetworkStore(StoreQueue* storeq,
                           const string& category,
@@ -1833,6 +1867,7 @@ NetworkStore::NetworkStore(StoreQueue* storeq,
     useConnPool(false),
     serviceBased(false),
     remotePort(0),
+    sslOptions(new SSLOptions),
     serviceCacheTimeout(DEFAULT_NETWORKSTORE_CACHE_TIMEOUT),
     lastServiceCheck(0),
     ignoreNetworkError(false),
@@ -1892,6 +1927,8 @@ void NetworkStore::configure(pStoreConf configuration, pStoreConf parent) {
       ignoreNetworkError = true;
     }
   }
+
+  sslOptions->configure(*configuration);
 
   // if this network store dynamic configured?
   // get network dynamic updater parameters
@@ -1991,8 +2028,7 @@ bool NetworkStore::open() {
     return false;
   } else {
     if (useConnPool) {
-      opened = g_connPool.open(remoteHost, remotePort,
-          static_cast<int>(timeout));
+      opened = g_connPool.open(remoteHost, remotePort, static_cast<int>(timeout), sslOptions);
     } else {
       // only open unpooled connection if not already open
       if (unpooledConn != NULL) {
@@ -2003,7 +2039,7 @@ bool NetworkStore::open() {
           msgThresholdMap[ConnPool::makeKey(remoteHost, remotePort)]
            : defThresholdBeforeReconnect;
       unpooledConn = shared_ptr<scribeConn>(new scribeConn(remoteHost,
-          remotePort, static_cast<int>(timeout), msgThreshold, allowableDeltaBeforeReconnect));
+          remotePort, static_cast<int>(timeout), msgThreshold, allowableDeltaBeforeReconnect, sslOptions));
       opened = unpooledConn->open();
       if (!opened) {
         unpooledConn.reset();
@@ -2055,6 +2091,7 @@ shared_ptr<Store> NetworkStore::copy(const std::string &category) {
   store->remoteHost = remoteHost;
   store->remotePort = remotePort;
   store->serviceName = serviceName;
+  store->sslOptions = sslOptions;
 
   return copied;
 }

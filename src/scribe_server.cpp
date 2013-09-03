@@ -135,6 +135,9 @@ int main(int argc, char **argv) {
     // seed random number generation with something reasonably unique
     srand(time(NULL) ^ getpid());
 
+    // don't terminate if a pipe breaks
+    signal(SIGPIPE, SIG_IGN);
+
     g_Handler = shared_ptr<scribeHandler>(new scribeHandler(port, config_file));
     g_Handler->initialize();
 
@@ -152,6 +155,7 @@ scribeHandler::scribeHandler(unsigned long int server_port, const std::string& c
   : FacebookBase("Scribe"),
     port(server_port),
     numThriftServerThreads(DEFAULT_SERVER_THREADS),
+    sslOptions(new SSLOptions),
     checkPeriod(DEFAULT_CHECK_PERIOD),
     configFilename(config_file),
     status(STARTING),
@@ -688,6 +692,9 @@ void scribeHandler::initialize() {
       checkPeriod = 1;
     }
     config.getUnsigned("max_conn", maxConn);
+
+    // Setup SSL options
+    sslOptions->configure(config);
 
     // If new_thread_per_category, then we will create a new thread/StoreQueue
     // for every unique message category seen.  Otherwise, we will just create
