@@ -16,10 +16,6 @@ DESC=scribe
 DAEMON_OPTS="-c /etc/scribe/scribe.conf"
 SCRIBE_CTRL=/usr/bin/scribe_ctrl
 
-if [ -f /etc/scribe/certs/client.key ] ; then
-	SCRIBE_CTRL="$SCRIBE_CTRL --keyfile /etc/scribe/certs/client.key --certfile /etc/scribe/certs/client.crt --cacerts /etc/scribe/certs/server.crt"
-fi
-
 test -x $DAEMON || exit 0
 
 # Include scribe defaults if available
